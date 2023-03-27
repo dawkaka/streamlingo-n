@@ -1,41 +1,79 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import axios from 'axios';
 import FormData from 'form-data';
+import formidable from 'formidable';
+import fs, { createReadStream } from 'fs'
+import { Configuration, OpenAIApi } from 'openai'
 
 // Replace these with your actual OpenAI and Google Translate API keys
-const OPENAI_API_KEY = 'YOUR_OPENAI_API_KEY';
-const GOOGLE_TRANSLATE_API_KEY = 'YOUR_GOOGLE_TRANSLATE_API_KEY';
+const configuration = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY
+});
+const openai = new OpenAIApi(configuration);
 
-async function transcribeAudio(audio: Blob): Promise<string> {
-  // Make an API call to OpenAI's Whisper API to transcribe the audio
-  const form = new FormData();
-  form.append('audio', audio);
-  const response = await axios.post('https://api.openai.com/v1/whisper/recognize', form, {
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': `multipart/form-data; boundary=${form.getBoundary()}`,
-    },
+async function transcribeAudio(audiopath: string) {
+  const audio = createReadStream(audiopath);
+  const buffer = await new Promise<Buffer>((resolve, reject) => {
+    const buffers: Buffer[] = [];
+    audio.on('error', reject);
+    audio.on('data', (d: Buffer) => buffers.push(d));
+    audio.on('end', () => resolve(Buffer.concat(buffers)));
   });
-  return response.data.text;
+  const base64 = buffer.toString('base64');
+
+  const response = await openai.createCompletion({
+    model: "text-davinci-003",
+    prompt: `Transcribe this audio: ${base64}`,
+    temperature: 0,
+    max_tokens: 1024,
+  });
+  const r = response.data.choices
+  if (r[0].text) {
+    return r[0].text.trim();
+  }
+  return ""
 }
 
 async function translateText(text: string, targetLanguage: string): Promise<string> {
   // Make an API call to Google Translate API to translate the text to the target language
-  const response = await axios.post(`https://translation.googleapis.com/language/translate/v2?key=${GOOGLE_TRANSLATE_API_KEY}`, {
+  const response = await axios.post(`https://translation.googleapis.com/language/translate/v2?key=s`, {
     q: text,
     target: targetLanguage,
   });
   return response.data.data.translations[0].translatedText;
 }
 
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const { audio, targetLanguage } = req.body;
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type');
 
-  // Transcribe the audio using OpenAI's Whisper API
-  const text = await transcribeAudio(audio);
+  const form = new formidable.IncomingForm();
+  form.parse(req, async (err, fields, files) => {
+    if (err) {
+      res.status(500).json({ message: 'Internal Server Error' });
+      return;
+    }
+    try {
+      const { targetLanguage } = fields;
+      // Transcribe the audio using OpenAI's Whisper API
+      const audio = files[Object.keys(files)[0]] as formidable.File;
+      const text = await transcribeAudio(audio.filepath);
+      console.log(text)
+      // Translate the transcribed text to the target language using Google Translate API
+      const translation = await translateText(text, targetLanguage as string);
+      res.status(200).json({ translation });
 
-  // Translate the transcribed text to the target language using Google Translate API
-  const translation = await translateText(text, targetLanguage);
+    } catch (error) {
+      console.log(error)
+      res.status(500).json({ message: "something went wrong" })
+    }
 
-  res.status(200).json({ translation });
+  });
 }
