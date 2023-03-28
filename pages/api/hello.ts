@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import axios from 'axios';
 import FormData from 'form-data';
 import formidable from 'formidable';
-import fs, { createReadStream } from 'fs'
+import fs, { createReadStream, readFileSync } from 'fs'
 import { Configuration, OpenAIApi } from 'openai'
 
 // Replace these with your actual OpenAI and Google Translate API keys
@@ -11,27 +11,23 @@ const configuration = new Configuration({
 });
 const openai = new OpenAIApi(configuration);
 
-async function transcribeAudio(audiopath: string) {
-  const audio = createReadStream(audiopath);
-  const buffer = await new Promise<Buffer>((resolve, reject) => {
-    const buffers: Buffer[] = [];
-    audio.on('error', reject);
-    audio.on('data', (d: Buffer) => buffers.push(d));
-    audio.on('end', () => resolve(Buffer.concat(buffers)));
-  });
-  const base64 = buffer.toString('base64');
 
-  const response = await openai.createCompletion({
-    model: "text-davinci-003",
-    prompt: `Transcribe this audio: ${base64}`,
-    temperature: 0,
-    max_tokens: 1024,
-  });
-  const r = response.data.choices
-  if (r[0].text) {
-    return r[0].text.trim();
-  }
-  return ""
+async function transcribeAudio(audiopath: string, name: string) {
+  const audio = readFileSync(audiopath);
+
+  const url = 'https://api.openai.com/v1/audio/transcriptions';
+  const headers = {
+    'Content-Type': 'multipart/form-data',
+    'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+  };
+  const formData = new FormData();
+  formData.append('model', 'whisper-1');
+  formData.append('file', audio, { filename: name });
+  formData.append('format', 'text');
+  formData.append('speaker_count', '0');
+
+  const response = await axios.post(url, formData, { headers });
+  return response.data.text;
 }
 
 async function translateText(text: string, targetLanguage: string): Promise<string> {
@@ -53,27 +49,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
   res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type');
+  if (req.method === "POST") {
+    const form = new formidable.IncomingForm();
+    form.parse(req, async (err, fields, files) => {
+      if (err) {
+        res.status(500).json({ message: 'Something went wrong' });
+        return;
+      }
+      try {
+        const { targetLanguage } = fields;
+        const { audio } = files
+        // const text = await transcribeAudio("/home/dawkaka/output_audio.mp3");
+        if (Array.isArray(audio)) {
+          res.status(500).json({ message: 'Something went wrong' });
+          return;
+        }
+        const text = await transcribeAudio(audio.filepath, audio.originalFilename || "audio.mp3")
+        // Translate the transcribed text to the target language using Google Translate API
+        const translation = await translateText(text, targetLanguage as string);
+        res.status(200).json({ translation });
 
-  const form = new formidable.IncomingForm();
-  form.parse(req, async (err, fields, files) => {
-    if (err) {
-      res.status(500).json({ message: 'Internal Server Error' });
-      return;
-    }
-    try {
-      const { targetLanguage } = fields;
-      // Transcribe the audio using OpenAI's Whisper API
-      const audio = files[Object.keys(files)[0]] as formidable.File;
-      const text = await transcribeAudio(audio.filepath);
-      console.log(text)
-      // Translate the transcribed text to the target language using Google Translate API
-      const translation = await translateText(text, targetLanguage as string);
-      res.status(200).json({ translation });
+      } catch (error) {
+        console.log(error)
+        res.status(500).json({ message: "something went wrong" })
+      }
 
-    } catch (error) {
-      console.log(error)
-      res.status(500).json({ message: "something went wrong" })
-    }
+    });
+  } else {
+    res.status(404).send("Method not allowed")
+  }
 
-  });
 }
