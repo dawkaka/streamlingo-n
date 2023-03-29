@@ -9,8 +9,8 @@ import { Configuration, OpenAIApi } from 'openai'
 const configuration = new Configuration({
   apiKey: process.env.OPENAI_API_KEY
 });
-const openai = new OpenAIApi(configuration);
 
+const openai = new OpenAIApi(configuration);
 
 async function transcribeAudio(audiopath: string, name: string) {
   const audio = readFileSync(audiopath);
@@ -59,18 +59,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         const { targetLanguage } = fields;
         const { audio } = files
-        // const text = await transcribeAudio("/home/dawkaka/output_audio.mp3");
+
         if (Array.isArray(audio)) {
           res.status(500).json({ message: 'Something went wrong' });
           return;
         }
         const text = await transcribeAudio(audio.filepath, audio.originalFilename || "audio.mp3")
-        // Translate the transcribed text to the target language using Google Translate API
-        const translation = await translateText(text, targetLanguage as string);
-        res.status(200).json({ translation });
 
-      } catch (error) {
-        console.log(error)
+        const prompt = `Please translate this text: ${text} 
+        To: ${targetLanguage}
+        If the text and the target language are the same then breakdown at most 2 words that might be uncommon and provide their definitions in the format: word: definition of the word
+        `
+        const response = await openai.createCompletion({
+          model: "text-davinci-003",
+          prompt: prompt,
+          temperature: 0,
+          max_tokens: 1024,
+        });
+        const recommendations = response.data.choices
+        let data = { outfit: [], description: "", selectedItems: [] }
+        if (recommendations[0].text) {
+          console.log(recommendations[0].text)
+          res.status(200).json({
+            translation: `${text} 
+
+          ${recommendations[0].text}`
+          });
+        }
+        res.status(200).json({ translation: "" });
+
+      } catch (error: any) {
+        console.log(error.response?.data)
         res.status(500).json({ message: "something went wrong" })
       }
 
