@@ -66,10 +66,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
         const text = await transcribeAudio(audio.filepath, audio.originalFilename || "audio.mp3")
 
-        const prompt = `Please translate this text: ${text} 
-        To: ${targetLanguage}
-        If the text and the target language are the same then breakdown at most 2 words that might be uncommon and provide their definitions in the format: word: definition of the word
-        `
+        const prompt = `Please translate the following text: ${text}
+To: ${targetLanguage}
+If the input text and target language are the same, provide the definitions of at most 2 uncommon words in the text in the following format: "word: definition of the word".
+Additionally, if the input text contains any idiomatic expressions, please explain the meaning of those expressions.`
+
         const response = await openai.createCompletion({
           model: "text-davinci-003",
           prompt: prompt,
