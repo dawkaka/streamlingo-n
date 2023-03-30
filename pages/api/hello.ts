@@ -78,9 +78,7 @@ Additionally, if the input text contains any idiomatic expressions, please expla
           max_tokens: 1024,
         });
         const recommendations = response.data.choices
-        let data = { outfit: [], description: "", selectedItems: [] }
         if (recommendations[0].text) {
-          console.log(recommendations[0].text)
           res.status(200).json({
             translation: `${text} 
 
@@ -90,7 +88,6 @@ Additionally, if the input text contains any idiomatic expressions, please expla
         res.status(200).json({ translation: "" });
 
       } catch (error: any) {
-        console.log(error.response?.data)
         res.status(500).json({ message: "something went wrong" })
       }
 
